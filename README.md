@@ -7,6 +7,8 @@
 1. [Inputs](#inputs)
 
 ## Overview
+This fork includes a print function to print out metadata associated with each Entity, User, Role and optionally Tokens.
+To print token metatada, please export `PRINT_TOKEN_META=1` before running the script.
 
 Simply container script to run and count HashiCorp Vault entities, roles/users, 
 and tokens created without entities. The script will drill into an child 
