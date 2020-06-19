@@ -15,10 +15,70 @@ function vault_curl() {
   "$@"
 }
 
+function print_things() {
+  VAULT_NAMESPACE=$1
+
+  NAMES=$(vault_curl \
+    --request LIST \
+    $VAULT_ADDR/v1/identity/entity/name | \
+    jq -r '.["data"]["keys"]')
+
+  [[ $NAMES != 'null' ]] && echo "Entity names: $NAMES"
+  for name in $NAMES
+  do
+      [[ $name != 'null' ]] && [[ $name != ']' ]] && [[ $name != '[' ]] \
+          && n=$(echo $name | sed -e s/'"'/''/g -e s/','/''/ ) \
+          && echo "Printing entity with name: $n" \
+          && vault_curl $VAULT_ADDR/v1/identity/entity/name/$n | jq .
+  done
+
+  AUTH_METHODS=$(vault_curl $VAULT_ADDR/v1/sys/auth | jq '.["data"] | keys[]' | tr -d '\n' | sed s/'\/"'/'\/",'/g)
+  echo "Auth Methods: [$AUTH_METHODS]"
+  
+  # Roles
+  TOTAL_ROLES=0
+  for mount in $(vault_curl \
+   $VAULT_ADDR/v1/sys/auth | \
+   jq -r '.? | .["data"] | keys[]');
+  do
+
+   users=$(vault_curl \
+     --request LIST \
+     $VAULT_ADDR/v1/auth/${mount}users | \
+               jq -r '.["data"]["keys"]')
+
+    [[ ! -z $users ]] && [[ $users != 'null' ]]  && echo "Users for mount $mount: $users"
+   
+   roles=$(vault_curl \
+     --request LIST \
+     $VAULT_ADDR/v1/auth/${mount}roles | \
+     jq -r '.["data"]["keys"]')
+
+    [[ ! -z $roles ]] && [[ $roles != 'null' ]]  && echo "Roles for mount $mount: $roles"
+   
+  done
+
+  # Tokens
+  TOTAL_TOKENS_RAW=$(vault_curl \
+   --request LIST \
+   $VAULT_ADDR/v1/auth/token/accessors
+  )
+
+    for accessor in $(echo $TOTAL_TOKENS_RAW | jq -r '.? | .["data"]["keys"] | join("\n")');
+    do
+        if [[ $PRINT_TOKEN_META = 1 ]]; then
+           token=$(vault_curl --request POST -d "{ \"accessor\": \"${accessor}\" }" \
+             $VAULT_ADDR/v1/auth/token/lookup-accessor | jq '.data' ) && echo "Token accessor $accessor: $token"
+        else
+            echo "Token accessor $accessor: skip printing metadata (set PRINT_TOKEN_META=1)"
+        fi
+    done      
+
+}
+
 function count_things() {
   VAULT_NAMESPACE=$1
 
-  # Entities
   TOTAL_ENTITIES=$(vault_curl \
     --request LIST \
     $VAULT_ADDR/v1/identity/entity/id | \
@@ -27,7 +87,6 @@ function count_things() {
   # Roles
   TOTAL_ROLES=0
   for mount in $(vault_curl \
-   --request GET \
    $VAULT_ADDR/v1/sys/auth | \
    jq -r '.? | .["data"] | keys[]');
   do
@@ -35,23 +94,11 @@ function count_things() {
      --request LIST \
      $VAULT_ADDR/v1/auth/${mount}users | \
      jq -r '.? | .["data"]["keys"] | length')
-   role=$(vault_curl \
-     --request LIST \
-     $VAULT_ADDR/v1/auth/${mount}role | \
-     jq -r '.? | .["data"]["keys"] | length')
    roles=$(vault_curl \
      --request LIST \
      $VAULT_ADDR/v1/auth/${mount}roles | \
      jq -r '.? | .["data"]["keys"] | length')
-   certs=$(vault_curl \
-     --request LIST \
-     $VAULT_ADDR/v1/auth/${mount}certs | \
-     jq -r '.? | .["data"]["keys"] | length')
-   groups=$(vault_curl \
-     --request LIST \
-     $VAULT_ADDR/v1/auth/${mount}groups | \
-     jq -r '.? | .["data"]["keys"] | length')
-   TOTAL_ROLES=$((TOTAL_ROLES + users + role + roles + certs + groups))
+   TOTAL_ROLES=$((TOTAL_ROLES + users + roles))
   done
 
   # Tokens
@@ -92,6 +139,8 @@ function drill_in() {
   counts=$(count_things $1)
   output $counts
 
+  print_things $1
+  
   # Pull all namespaces from current position, if any
   NAMESPACE_LIST=$(vault_curl \
     --request LIST \
